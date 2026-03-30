@@ -27,7 +27,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller --noconfirm --onefile --windowed `
-            --name "一键部署工具" `
+            --name "deploy-tool" `
             --add-data "data;data" `
             --icon "icon.ico" `
             --hidden-import PyQt6 `
@@ -44,6 +44,6 @@ jobs:
           body: "Jar包一键部署工具 自动构建版本"
           draft: false
           prerelease: false
-          files: dist/一键部署工具.exe
+          files: dist/deploy-tool.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
