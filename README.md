@@ -1,4 +1,4 @@
-# 🚀 荆铸一键部署工具
+# 🚀 Jar包一键部署工具
 
 一个带图形界面的 Windows 桌面应用，用于一键完成：Maven 打包 → 上传 Jar 到 Linux 服务器 → 执行启动脚本。
 
@@ -22,7 +22,7 @@ python main.py
 
 ### 方式二：打包成 exe（无 Python 环境也能用）
 
-双击运行 `package.bat`，会在 `dist/` 目录下生成 `荆铸一键部署工具.exe`。
+双击运行 `package.bat`，会在 `dist/` 目录下生成 `Jar包一键部署工具.exe`。
 
 ## 依赖
 
