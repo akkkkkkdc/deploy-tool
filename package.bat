@@ -3,11 +3,13 @@ echo ===== 安装依赖 =====
 pip install -r requirements.txt
 
 echo ===== 打包exe =====
-pyinstaller --noconfirm --onefile --windowed --name "Jar包一键部署工具" ^
+pyinstaller --noconfirm --onefile --windowed --name "一键部署工具" ^
     --add-data "data;data" ^
+    --icon "icon.ico" ^
     --hidden-import=paramiko.paramiko ^
     --hidden-import=cryptography.fernet ^
     --hidden-import=PyQt6 ^
+    --collect-all PyQt6 ^
     main.py
 
 echo ===== 完成 =====
