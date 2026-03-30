@@ -33,16 +33,15 @@ jobs:
             --collect-all PyQt6 `
             main.py
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-tool-exe
-          path: dist/部署工具.exe
-
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: build-${{ github.run_number }}
+          name: 部署工具 v${{ github.run_number }}
+          body: "Jar包一键部署工具 自动构建版本"
+          draft: false
+          prerelease: false
+          deletes_on_expiration: true
           files: dist/部署工具.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
