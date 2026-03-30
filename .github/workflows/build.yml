@@ -29,6 +29,7 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed `
             --name "deploy-tool" `
             --add-data "data;data" `
+            --add-data "HELP.md;." `
             --icon "icon.ico" `
             --hidden-import PyQt6 `
             --hidden-import paramiko `
