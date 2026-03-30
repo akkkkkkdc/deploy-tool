@@ -9,7 +9,9 @@ from PyQt6.QtWidgets import (
     QStatusBar, QListWidget, QSplitter, QTabWidget, QTextBrowser,
     QSizePolicy
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
+from PyQt6.QtGui import QFont, QColor, QPixmap
+from PyQt6.QtWidgets import QSplashScreen
 from PyQt6.QtGui import QFont, QColor
 from datetime import datetime
 import subprocess
@@ -1263,22 +1265,60 @@ class ServerDialog(QDialog):
         user = self.user_le.text().strip()
         pw = self.pw_le.text()
         if not ip or not user:
-            QMessageBox.warning(self, "提示", "请填写 IP 地址和用户名")
+            self._show_msg("⚠️  请填写", "IP 地址和用户名不能为空", False)
             return
+        btn = self.sender()
+        btn.setText("🔄 连接中...")
+        btn.setEnabled(False)
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(ip, username=user, password=pw, timeout=8,
                           banner_timeout=8, auth_timeout=8)
             client.close()
-            QMessageBox.information(self, "✅ 连接成功",
-                f"服务器 {ip} 连接正常！")
+            self._show_msg("✅ 连接成功", f"服务器 {ip} 连接正常！", True)
         except paramiko.AuthenticationException:
-            QMessageBox.warning(self, "❌ 认证失败", "用户名或密码错误")
+            self._show_msg("❌ 认证失败", "用户名或密码错误", False)
         except socket.timeout:
-            QMessageBox.warning(self, "❌ 连接超时", f"无法连接到 {ip}，请检查 IP 和网络")
+            self._show_msg("❌ 连接超时", f"无法连接到 {ip}，请检查 IP 和网络", False)
         except Exception as e:
-            QMessageBox.warning(self, "❌ 连接失败", f"连接 {ip} 失败：\n{str(e)}")
+            self._show_msg("❌ 连接失败", f"连接 {ip} 失败：\n{str(e)}", False)
+        finally:
+            btn.setText("🔗 测试连接")
+            btn.setEnabled(True)
+
+    def _show_msg(self, title, text, success):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(340)
+        dlg.setFont(QFont("Segoe UI", 10))
+        dlg.setStyleSheet(f"""
+            QDialog {{ background:{C['surface']}; }}
+        """)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(16)
+        icon_label = QLabel("✅" if success else "❌")
+        icon_label.setStyleSheet(f"font-size:40px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+        msg = QLabel(text)
+        msg.setStyleSheet(f"color:{C['text']}; font-size:13px; line-height:1.6;")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+        ok_btn = QPushButton("✅ 知道了")
+        ok_btn.setFixedSize(120, 38)
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 {C['accent']}, stop:1 #9b8bff);
+                color:#fff; font-size:13px; font-weight:600;
+                border-radius:9px; border:none; }}
+            QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+        """)
+        ok_btn.clicked.connect(dlg.accept)
+        layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        dlg.exec()
 
     def get_data(self):
         return {
@@ -1379,6 +1419,39 @@ class AppDialog(QDialog):
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Splash screen - 立即显示，不卡顿
+    splash_img = os.path.join(os.path.dirname(__file__), "icon.jpg")
+    if os.path.exists(splash_img):
+        splash_pix = QPixmap(splash_img).scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    else:
+        splash_pix = QPixmap(400, 300)
+        splash_pix.fill(QColor(C['surface']))
+
+    splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+    splash.setFont(QFont("Segoe UI", 11))
+    loading_label = QLabel("正在启动...")
+    loading_label.setStyleSheet(f"color:{C['text']}; font-weight:600; font-size:13px; margin-top:8px;")
+    loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    sp_layout = QVBoxLayout()
+    sp_layout.addStretch()
+    sp_layout.addWidget(loading_label)
+    sp_container = QWidget()
+    sp_container.setLayout(sp_layout)
+    sp_container.setStyleSheet(f"background:transparent;")
+
+    # 用QLabel叠加文字
+    splash.setStyleSheet(f"background:{C['surface']}; border:none; border-radius:16px;")
+    splash.showMessage("正在启动...", Qt.AlignmentFlag.AlignCenter, QColor(C['text']))
+    splash.show()
+
+    def on_window_ready():
+        w.show()
+        splash.finish(w)
+
     w = MainWindow()
-    w.show()
+    # 窗口准备好后显示
+    QTimer.singleShot(50, on_window_ready)
+
     sys.exit(app.exec())
