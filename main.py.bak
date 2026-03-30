@@ -1,0 +1,625 @@
+import sys
+import os
+from pathlib import Path
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTreeWidget, QTreeWidgetItem, QPushButton, QTextEdit,
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMessageBox,
+    QLabel, QComboBox
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from data.database import db
+
+
+class DeployThread(QThread):
+    log_signal = pyqtSignal(str)
+
+    def __init__(self, app_info, maven_home, maven_repo='', jdk_home=''):
+        super().__init__()
+        self.app_info = app_info
+        self.maven_home = maven_home
+        self.maven_repo = maven_repo
+        self.jdk_home = jdk_home
+
+    def run(self):
+        import subprocess
+        import paramiko
+        from datetime import datetime
+
+        def log(msg):
+            self.log_signal.emit(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+        app = self.app_info
+        project_path = app.get('local_project_path', '').strip()
+
+        # 构造 mvn 命令
+        if self.maven_home and os.path.isdir(self.maven_home):
+            mvn_cmd = os.path.normpath(os.path.join(self.maven_home, "bin", "mvn.cmd"))
+            if not os.path.exists(mvn_cmd):
+                mvn_cmd = os.path.normpath(os.path.join(self.maven_home, "bin", "mvn"))
+            if not os.path.exists(mvn_cmd):
+                log(f"❌ Maven路径无效: {self.maven_home}")
+                return
+        else:
+            mvn_cmd = "mvn"
+
+        try:
+            log("=" * 50)
+            log("🚀 部署开始")
+            log("=" * 50)
+
+            # Maven 打包：优先用配置的 JDK 路径作为 JAVA_HOME
+            env = os.environ.copy()
+            if self.jdk_home and os.path.isdir(self.jdk_home):
+                jdk_bin = os.path.join(self.jdk_home, "bin")
+                env["JAVA_HOME"] = self.jdk_home
+                # 把 JDK bin 放到 PATH 最前面，确保 Maven 用这个 JDK
+                env["PATH"] = jdk_bin + os.pathsep + env.get("PATH", "")
+                log(f"   使用 JDK: {self.jdk_home}")
+            log(f"📦 Maven 打包中: {mvn_cmd} clean package -DskipTests ...")
+            cmd = [mvn_cmd, "clean", "package", "-DskipTests"]
+            if self.maven_repo:
+                cmd.insert(3, "-Dmaven.repo.local=" + self.maven_repo)
+            if app.get('maven_module'):
+                cmd.extend(["-pl", app['maven_module'], "-am"])
+            cwd = project_path if project_path else None
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=cwd,
+                shell=True,
+                env=env,
+                bufsize=1,
+                universal_newlines=True
+            )
+            # 实时逐行读取 Maven 输出
+            for line in proc.stdout:
+                stripped = line.rstrip()
+                if stripped:
+                    # Maven 进度关键字高亮
+                    if any(kw in stripped for kw in ["Building", "Downloaded", "Compiling", "Tests", "BUILD"]):
+                        log(f"   {stripped}")
+                    else:
+                        log(f"   {stripped}")
+            proc.wait()
+            if proc.returncode != 0:
+                log(f"❌ Maven 打包失败 (exit code {proc.returncode})")
+                return
+            log("✅ Maven 打包完成")
+
+            # 找 jar
+            jar_name = app['jar_name']
+            search_dir = Path(project_path) / "target" if project_path else Path("target")
+            jar_path = None
+            if search_dir.exists():
+                candidate = search_dir / jar_name
+                if candidate.exists():
+                    jar_path = str(candidate)
+                else:
+                    for f in search_dir.glob("*.jar"):
+                        if "original" not in f.name and f.name.endswith(".jar"):
+                            jar_path = str(f)
+                            break
+            if not jar_path:
+                log(f"❌ 未找到 jar 包: {jar_name}")
+                return
+            log(f"   jar路径: {jar_path}")
+
+            # 上传
+            remote_basename = os.path.basename(jar_path)
+            remote_path = app['server_path'].replace("\\", "/") + "/" + remote_basename
+            log(f"📤 上传 jar 到 {app['ip']}:{remote_path} ...")
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(app['ip'], username=app['username'], password=app['password'], timeout=10)
+            sftp = ssh.open_sftp()
+            sftp.put(jar_path, remote_path)
+            sftp.close()
+            ssh.close()
+            log(f"✅ jar 已上传到: {remote_path}")
+
+            # 在服务器同级目录生成 hello.txt（包含部署时间）
+            hello_content = f"部署时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n应用: {app['name']}\nJar: {remote_basename}\n服务器: {app['ip']}\n"
+            remote_hello = app['server_path'].replace("\\", "/") + "/hello.txt"
+            ssh_hello = paramiko.SSHClient()
+            ssh_hello.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh_hello.connect(app['ip'], username=app['username'], password=app['password'], timeout=10)
+            sftp_hello = ssh_hello.open_sftp()
+            with sftp_hello.file(remote_hello, "w") as f:
+                f.write(hello_content)
+            sftp_hello.close()
+            ssh_hello.close()
+            log(f"📝 hello.txt 已生成: {remote_hello}")
+
+            # 验证文件上传成功，打印服务器上的文件信息
+            log(f"🔍 验证上传结果...")
+            ssh_verify = paramiko.SSHClient()
+            ssh_verify.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh_verify.connect(app['ip'], username=app['username'], password=app['password'], timeout=10)
+            _, stdout, _ = ssh_verify.exec_command(f"ls -lh {remote_path}")
+            result = stdout.read().decode().strip()
+            ssh_verify.close()
+            if result:
+                log(f"   服务器文件: {result}")
+            else:
+                log(f"   ⚠️  未找到服务器文件，请检查路径是否正确")
+
+            # 执行脚本
+            log(f"🖥️  执行启动脚本 {app['sh_name']} restart ...")
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(app['ip'], username=app['username'], password=app['password'], timeout=10)
+            cmd_str = f"cd {app['server_path']} && sh {app['sh_name']} restart"
+            stdin, stdout, stderr = ssh.exec_command(cmd_str)
+            output = stdout.read().decode()
+            error = stderr.read().decode()
+            ssh.close()
+            if error:
+                for line in error.strip().split('\n')[-5:]:
+                    log(f"   stderr: {line}")
+            if output:
+                for line in output.strip().split('\n')[-10:]:
+                    log(f"   {line}")
+            log("✅ 启动脚本执行完成")
+            log("🎉 部署完成！")
+        except Exception as e:
+            log(f"❌ 部署失败: {e}")
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.maven_home = db.get_setting('maven_home', '')
+        self.maven_repo = db.get_setting('maven_repo', '')
+        self.jdk_home = db.get_setting('jdk_home', '')
+        self.setWindowTitle("⚙️  全局设置")
+        self.setMinimumWidth(500)
+        self.setFont(QFont("Microsoft YaHei UI", 10))
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QWidget { background: #1e1e2e; color: #cdd6f4; }
+            QLineEdit { background: #11111b; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 6px; }
+            QPushButton { background: #89b4fa; color: #1e1e2e; border: none; padding: 8px 20px; border-radius: 6px; font-weight: bold; }
+            QPushButton:hover { background: #b4befe; }
+        """)
+        layout = QVBoxLayout(self)
+
+        info = QLabel("💡 设置仅需配置一次，下次打开仍在。不填则使用系统默认。")
+        info.setStyleSheet("color: #a6adc8; font-size: 12px; padding: 5px;")
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        self.jdk_le = QLineEdit()
+        self.jdk_le.setText(self.jdk_home)
+        self.jdk_le.setPlaceholderText("例如：C:/environments/java")
+        form.addRow("JDK 路径:", self.jdk_le)
+
+        self.maven_le = QLineEdit()
+        self.maven_le.setText(self.maven_home)
+        self.maven_le.setPlaceholderText("例如：D:/Softwares/study/apache-maven-3.6.3")
+        form.addRow("Maven 路径:", self.maven_le)
+
+        self.maven_repo_le = QLineEdit()
+        self.maven_repo_le.setText(self.maven_repo)
+        self.maven_repo_le.setPlaceholderText("例如：D:/Softwares/study/maven-jarDeDeBao")
+        form.addRow("Maven 仓库路径:", self.maven_repo_le)
+
+        hint = QLabel("📌 JDK路径：编译用的 JDK（你的 C:\\environments\\java）\n📌 Maven路径：Maven 安装目录\n📌 仓库路径：本地仓库目录\n全部留空则使用系统环境变量默认值")
+        hint.setStyleSheet("color: #a6adc8; font-size: 11px; padding: 5px;")
+        layout.addLayout(form)
+        layout.addWidget(hint)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def accept(self):
+        db.set_setting('jdk_home', self.jdk_le.text().strip())
+        db.set_setting('maven_home', self.maven_le.text().strip())
+        db.set_setting('maven_repo', self.maven_repo_le.text().strip())
+        super().accept()
+
+
+class ServerDialog(QDialog):
+    def __init__(self, parent=None, server=None):
+        super().__init__(parent)
+        self.server = server or {}
+        self.setWindowTitle("编辑服务器" if server else "新增服务器")
+        self.setMinimumWidth(450)
+        self.setFont(QFont("Microsoft YaHei UI", 10))
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QWidget { background: #1e1e2e; color: #cdd6f4; }
+            QLineEdit { background: #11111b; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 6px; }
+            QPushButton { background: #89b4fa; color: #1e1e2e; border: none; padding: 8px 20px; border-radius: 6px; font-weight: bold; }
+            QPushButton:hover { background: #b4befe; }
+        """)
+        layout = QFormLayout(self)
+
+        self.name_le = QLineEdit(text=self.server.get('name', ''), placeholderText="例如：测试环境服务器1")
+        self.ip_le = QLineEdit(text=self.server.get('ip', ''), placeholderText="例如：192.168.90.16")
+        self.username_le = QLineEdit(text=self.server.get('username', 'root'), placeholderText="用户名")
+        self.password_le = QLineEdit(text=self.server.get('password', ''), placeholderText="密码", echoMode=QLineEdit.EchoMode.Password)
+        self.server_path_le = QLineEdit(text=self.server.get('server_path', '/home/wuyuan/server/jingzhu-imaster'), placeholderText="/home/wuyuan/server/jingzhu-imaster")
+        self.remark_le = QLineEdit(text=self.server.get('remark', ''), placeholderText="备注（可选）")
+
+        layout.addRow("服务器名称:", self.name_le)
+        layout.addRow("IP地址:", self.ip_le)
+        layout.addRow("用户名:", self.username_le)
+        layout.addRow("密码:", self.password_le)
+        layout.addRow("项目路径:", self.server_path_le)
+        layout.addRow("备注:", self.remark_le)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def get_data(self):
+        return {
+            'name': self.name_le.text().strip(),
+            'ip': self.ip_le.text().strip(),
+            'username': self.username_le.text().strip(),
+            'password': self.password_le.text(),
+            'server_path': self.server_path_le.text().strip(),
+            'remark': self.remark_le.text().strip(),
+        }
+
+
+class AppDialog(QDialog):
+    def __init__(self, parent=None, app=None, servers=None, preselected_server_id=None):
+        super().__init__(parent)
+        self.app = app or {}
+        self.servers = servers or []
+        self.preselected_server_id = preselected_server_id
+        self.setWindowTitle("编辑应用" if app else "新增应用")
+        self.setMinimumWidth(500)
+        self.setFont(QFont("Microsoft YaHei UI", 10))
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QWidget { background: #1e1e2e; color: #cdd6f4; }
+            QLineEdit { background: #11111b; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 6px; }
+            QPushButton { background: #89b4fa; color: #1e1e2e; border: none; padding: 8px 20px; border-radius: 6px; font-weight: bold; }
+            QPushButton:hover { background: #b4befe; }
+        """)
+        layout = QFormLayout(self)
+
+        self.name_le = QLineEdit(text=self.app.get('name', ''), placeholderText="例如：industry")
+        self.jar_name_le = QLineEdit(text=self.app.get('jar_name', ''), placeholderText="例如：industry-0.0.1-SNAPSHOT.jar")
+        self.sh_name_le = QLineEdit(text=self.app.get('sh_name', ''), placeholderText="例如：uu-industry.sh")
+        self.maven_module_le = QLineEdit(text=self.app.get('maven_module', ''), placeholderText="多模块项目填子模块名（可选）")
+        self.local_project_path_le = QLineEdit(text=self.app.get('local_project_path', ''), placeholderText="例如：D:\\ideaProjects\\companyProject\\IMasterR\\iMaster-Api")
+
+        self.server_cmb = QComboBox()
+        self.server_cmb.addItems([s['name'] for s in self.servers])
+        # 优先选中当前编辑的应用所属服务器（编辑模式），其次选中传入的预选服务器（新增模式）
+        target_server_id = self.app.get('server_id') or self.preselected_server_id
+        if target_server_id:
+            for i, s in enumerate(self.servers):
+                if s['id'] == target_server_id:
+                    self.server_cmb.setCurrentIndex(i)
+                    break
+
+        layout.addRow("应用名称:", self.name_le)
+        layout.addRow("Jar包名:", self.jar_name_le)
+        layout.addRow("启动脚本:", self.sh_name_le)
+        layout.addRow("Maven模块:", self.maven_module_le)
+        layout.addRow("本地项目路径:", self.local_project_path_le)
+        layout.addRow("所属服务器:", self.server_cmb)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def get_data(self):
+        server_name = self.server_cmb.currentText()
+        server_id = None
+        for s in self.servers:
+            if s['name'] == server_name:
+                server_id = s['id']
+                break
+        return {
+            'name': self.name_le.text().strip(),
+            'jar_name': self.jar_name_le.text().strip(),
+            'sh_name': self.sh_name_le.text().strip(),
+            'maven_module': self.maven_module_le.text().strip(),
+            'local_project_path': self.local_project_path_le.text().strip(),
+            'server_id': server_id,
+        }
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.deploy_thread = None
+        self.current_app = None
+        self.init_ui()
+        self.refresh_tree()
+
+    def init_ui(self):
+        self.setWindowTitle("🚀 荆铸一键部署工具")
+        self.setMinimumSize(1000, 650)
+        self.setFont(QFont("Microsoft YaHei UI", 10))
+        self.setStyleSheet("""
+            QMainWindow { background: #1e1e2e; color: #cdd6f4; }
+            QTreeWidget { background: #181825; border: 1px solid #313244; color: #cdd6f4; font-size: 13px; }
+            QTreeWidget::item { padding: 6px; }
+            QTreeWidget::item:selected { background: #89b4fa; color: #1e1e2e; }
+            QPushButton { background: #89b4fa; color: #1e1e2e; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background: #b4befe; }
+            QPushButton:pressed { background: #74c7ec; }
+            QTextEdit { background: #11111b; color: #a6e3a1; border: 1px solid #313244; font-family: Consolas; font-size: 12px; }
+            QLabel { color: #cdd6f4; }
+            QDialog { background: #1e1e2e; }
+            QLineEdit { background: #11111b; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px; padding: 6px; }
+        """)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        root_layout = QHBoxLayout(central)
+
+        # ========== 左侧面板 ==========
+        left_widget = QWidget()
+        left_widget.setMaximumWidth(320)
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(5, 5, 5, 5)
+
+        title_label = QLabel("🖥️  服务器与应用")
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 5px;")
+        left_layout.addWidget(title_label)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setIndentation(15)
+        self.tree.itemClicked.connect(self.on_tree_clicked)
+        left_layout.addWidget(self.tree)
+
+        # 新增服务器/应用按钮
+        btn_layout = QHBoxLayout()
+        self.add_server_btn = QPushButton("+ 服务器")
+        self.add_server_btn.setMaximumWidth(110)
+        self.add_server_btn.clicked.connect(self.add_server)
+        self.add_app_btn = QPushButton("+ 应用")
+        self.add_app_btn.setMaximumWidth(90)
+        self.add_app_btn.clicked.connect(self.add_app)
+        btn_layout.addWidget(self.add_server_btn)
+        btn_layout.addWidget(self.add_app_btn)
+        left_layout.addLayout(btn_layout)
+
+        # 编辑/删除按钮
+        btn_layout2 = QHBoxLayout()
+        self.edit_btn = QPushButton("✏️  编辑")
+        self.edit_btn.clicked.connect(self.edit_selected)
+        self.delete_btn = QPushButton("🗑️  删除")
+        self.delete_btn.clicked.connect(self.delete_selected)
+        btn_layout2.addWidget(self.edit_btn)
+        btn_layout2.addWidget(self.delete_btn)
+        left_layout.addLayout(btn_layout2)
+
+        # 设置按钮
+        self.settings_btn = QPushButton("⚙️  全局设置")
+        self.settings_btn.setStyleSheet("background: #45475a; color: #cdd6f4;")
+        self.settings_btn.clicked.connect(self.open_settings)
+        left_layout.addWidget(self.settings_btn)
+
+        # ========== 右侧面板 ==========
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.info_label = QLabel("👈  请选择左侧服务器或应用")
+        self.info_label.setStyleSheet("font-size: 13px; padding: 10px; background: #181825; border-radius: 6px; line-height: 1.6;")
+        right_layout.addWidget(self.info_label)
+
+        self.deploy_btn = QPushButton("⚡  一键部署")
+        self.deploy_btn.setStyleSheet("""
+            QPushButton { background: #f38ba8; color: #1e1e2e; font-size: 15px; padding: 12px; }
+            QPushButton:hover { background: #f5c2e7; }
+        """)
+        self.deploy_btn.clicked.connect(self.do_deploy)
+        self.deploy_btn.setEnabled(False)
+        right_layout.addWidget(self.deploy_btn)
+
+        self.log_label = QLabel("📋  部署日志")
+        self.log_label.setStyleSheet("font-weight: bold;")
+        right_layout.addWidget(self.log_label)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setPlaceholderText("点击「一键部署」后，日志将显示在这里...")
+        right_layout.addWidget(self.log_text)
+
+        root_layout.addWidget(left_widget, 1)
+        root_layout.addWidget(right_widget, 3)
+
+    def refresh_tree(self):
+        self.tree.clear()
+        servers = db.get_all_servers()
+        for server in servers:
+            server_item = QTreeWidgetItem([f"🖥️  {server['name']}"])
+            server_item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'server', **server})
+            apps = db.get_apps_by_server(server['id'])
+            for app in apps:
+                app_item = QTreeWidgetItem([f"   📦 {app[2]}  ({app[3]})"])
+                app_item.setData(0, Qt.ItemDataRole.UserRole, {
+                    'type': 'app',
+                    'server_id': app[1],
+                    'app_id': app[0],
+                    'name': app[2],
+                    'jar_name': app[3],
+                    'sh_name': app[4],
+                    'maven_module': app[5],
+                    'local_project_path': app[6] if len(app) > 6 else '',
+                    'server': server,
+                })
+                server_item.addChild(app_item)
+            self.tree.addTopLevelItem(server_item)
+            server_item.setExpanded(True)
+
+    def on_tree_clicked(self, item, column):
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        if data['type'] == 'server':
+            self.current_app = None
+            s = data
+            self.info_label.setText(
+                f"<b>🖥️  服务器：{s['name']}</b><br>"
+                f"IP：{s['ip']} | 用户：{s['username']}<br>"
+                f"路径：{s['server_path']}<br>"
+                f"备注：{s.get('remark', '无')}"
+            )
+            self.deploy_btn.setEnabled(False)
+        else:
+            self.current_app = data
+            a = data
+            s = a['server']
+            proj_path = a.get('local_project_path', '') or '（未设置）'
+            maven_home = db.get_setting('maven_home', '')
+            maven_info = f"✅ {maven_home}" if maven_home else "（未设置，使用系统PATH）"
+            repo_info = f"✅ {db.get_setting('maven_repo', '')}" if db.get_setting('maven_repo', '') else "（未设置）"
+            jdk_info = f"✅ {db.get_setting('jdk_home', '')}" if db.get_setting('jdk_home', '') else "（未设置，使用系统JAVA_HOME）"
+            self.info_label.setText(
+                f"<b>📦 应用：{a['name']}</b><br>"
+                f"Jar：{a['jar_name']} | 脚本：{a['sh_name']}<br>"
+                f"服务器：{s['name']} ({s['ip']})<br>"
+                f"本地项目路径：{proj_path}<br>"
+                f"JDK路径：{jdk_info}<br>"
+                f"Maven路径：{maven_info}<br>"
+                f"Maven仓库：{repo_info}"
+            )
+            self.deploy_btn.setEnabled(True)
+
+    def open_settings(self):
+        dlg = SettingsDialog(self)
+        dlg.exec()
+        # 刷新右侧显示
+        if self.current_app:
+            self.on_tree_clicked(self.tree.currentItem(), 0)
+
+    def add_server(self):
+        dlg = ServerDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            if not data['name'] or not data['ip']:
+                QMessageBox.warning(self, "提示", "名称和IP不能为空")
+                return
+            db.add_server(**data)
+            self.refresh_tree()
+
+    def add_app(self):
+        servers = db.get_all_servers()
+        if not servers:
+            QMessageBox.warning(self, "提示", "请先添加服务器！")
+            return
+        # 默认选中当前树中选中的节点所属服务器（服务器或应用节点都可以）
+        preselected_server_id = None
+        current_item = self.tree.currentItem()
+        if current_item:
+            data = current_item.data(0, Qt.ItemDataRole.UserRole)
+            if data:
+                if data.get('type') == 'server':
+                    preselected_server_id = data.get('id')
+                elif data.get('type') == 'app':
+                    preselected_server_id = data.get('server', {}).get('id')
+        dlg = AppDialog(self, servers=servers, preselected_server_id=preselected_server_id)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            if not data['name'] or not data['jar_name'] or not data['server_id']:
+                QMessageBox.warning(self, "提示", "名称、Jar包名和服务器不能为空")
+                return
+            db.add_app(**data)
+            self.refresh_tree()
+
+    def edit_selected(self):
+        item = self.tree.currentItem()
+        if not item:
+            QMessageBox.warning(self, "提示", "请先选择要编辑的服务器或应用")
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data['type'] == 'server':
+            dlg = ServerDialog(self, server=data)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                new_data = dlg.get_data()
+                db.update_server(data['id'], **new_data)
+                self.refresh_tree()
+        else:
+            servers = db.get_all_servers()
+            dlg = AppDialog(self, app=data, servers=servers)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                new_data = dlg.get_data()
+                db.update_app(data['app_id'], **new_data)
+                self.refresh_tree()
+
+    def delete_selected(self):
+        item = self.tree.currentItem()
+        if not item:
+            QMessageBox.warning(self, "提示", "请先选择要删除的服务器或应用")
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除「{data['name']}」吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if data['type'] == 'server':
+                db.delete_server(data['id'])
+            else:
+                db.delete_app(data['app_id'])
+            self.refresh_tree()
+
+    def append_log(self, msg):
+        self.log_text.append(msg)
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum()
+        )
+
+    def do_deploy(self):
+        if not self.current_app:
+            return
+        self.log_text.clear()
+        self.deploy_btn.setEnabled(False)
+        self.append_log("⚙️  准备部署...")
+
+        maven_home = db.get_setting('maven_home', '')
+        maven_repo = db.get_setting('maven_repo', '')
+        jdk_home = db.get_setting('jdk_home', '')
+
+        app_info = {
+            'name': self.current_app['name'],
+            'jar_name': self.current_app['jar_name'],
+            'sh_name': self.current_app['sh_name'],
+            'maven_module': self.current_app.get('maven_module', ''),
+            'local_project_path': self.current_app.get('local_project_path', ''),
+            'ip': self.current_app['server']['ip'],
+            'username': self.current_app['server']['username'],
+            'password': self.current_app['server']['password'],
+            'server_path': self.current_app['server']['server_path'],
+        }
+
+        self.deploy_thread = DeployThread(app_info, maven_home, maven_repo, jdk_home)
+        self.deploy_thread.log_signal.connect(self.append_log)
+        self.deploy_thread.finished.connect(lambda: self.deploy_btn.setEnabled(True))
+        self.deploy_thread.start()
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = MainWindow()
+    w.show()
+    sys.exit(app.exec())
