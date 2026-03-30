@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QPushButton, QTextEdit,
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMessageBox,
     QLabel, QComboBox, QFrame, QProgressBar,
-    QStatusBar, QListWidget, QSplitter, QTabWidget, QTextBrowser
+    QStatusBar, QListWidget, QSplitter, QTabWidget, QTextBrowser,
+    QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QColor
@@ -114,7 +115,9 @@ class DeployThread(QThread):
             cancel_check()
             self.progress_signal.emit(45, 'upload')
             remote_basename = os.path.basename(jar_path)
-            remote_jar = app['server_path'].replace("\\", "/") + "/" + remote_basename
+            # 脚本目录：优先用 sh_path，不填则用 server_path
+            script_dir = app.get('sh_path') or app['server_path']
+            remote_jar = script_dir.replace("\\", "/") + "/" + remote_basename
             size_kb = os.path.getsize(jar_path) // 1024
             log(f"[3/6] 📤 上传 Jar ({size_kb} KB) ...")
             if not self._upload_file(jar_path, remote_jar, log, cancel_check):
@@ -125,15 +128,15 @@ class DeployThread(QThread):
             cancel_check()
             self.progress_signal.emit(60, 'hello')
             script_args = app.get('script_args', 'restart')
-            hello_content = (
+            deploy_txt_content = (
                 f"部署时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"应用: {app['name']}\n"
                 f"Jar: {remote_basename}\n"
                 f"服务器: {app['ip']}\n"
                 f"脚本: {app['sh_name']} {script_args}\n"
             )
-            remote_hello = app['server_path'].replace("\\", "/") + "/hello.txt"
-            self._write_remote_file(remote_hello, hello_content, log)
+            remote_deploy_txt = script_dir.replace("\\", "/") + "/deploy.txt"
+            self._write_remote_file(remote_deploy_txt, deploy_txt_content, log)
             log("[4/6] ✅ 部署记录已生成")
 
             # Step 5: 验证上传
@@ -146,7 +149,7 @@ class DeployThread(QThread):
             cancel_check()
             self.progress_signal.emit(90, 'script')
             log(f"[6/6] 🖥️  执行 {app['sh_name']} {script_args} ...")
-            script_cmd = f"cd {app['server_path']} && sh {app['sh_name']} {script_args}"
+            script_cmd = f"cd {script_dir} && sh {app['sh_name']} {script_args}"
             self._run_script(f"bash -l -c \"{script_cmd}\"", log, cancel_check)
             log("[6/6] ✅ 启动脚本执行完成")
 
@@ -428,15 +431,21 @@ class MainWindow(QMainWindow):
             QTreeWidget::item:hover {{ background: {C['surface2']}; }}
             QTreeWidget::item:selected {{
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {C['accent']}55, stop:1 {C['accent']}33);
+                    stop:0 {C['accent']}, stop:1 {C['accent']}99);
                 color: #fff; font-weight: 600;
+                border: 1px solid {C['accent']}88;
             }}
-            QPushButton {{ border: none; border-radius: 8px; font-weight: 600; font-size: 13px; }}
-            QPushButton:hover {{ opacity: 0.88; }}
+            QTreeWidget::item:selected:active {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 {C['accent']}ee, stop:1 {C['accent']}bb);
+                color: #fff; font-weight: 600;
+                border: 1px solid {C['accent']};
+            }}
+            QPushButton {{ border-radius: 8px; font-weight: 600; font-size: 13px; }}
             QPushButton:disabled {{ opacity: 0.4; }}
             QTextEdit {{ background: {C['surface']}; border: 1px solid {C['border']};
                 border-radius: 10px; color: #93c5fd; font-family: 'Cascadia Code','Consolas',monospace;
-                font-size: 12px; padding: 12px; }}
+                font-size: 12px; padding: 12px 12px 16px 12px; }}
             QLineEdit {{ background: {C['surface2']}; color: {C['text']};
                 border: 1px solid {C['border']}; border-radius: 6px; padding: 7px 10px; font-size: 13px; }}
             QLineEdit:focus {{ border-color: {C['accent']}; }}
@@ -548,22 +557,31 @@ class MainWindow(QMainWindow):
             b.setStyleSheet(f"""
                 QPushButton {{ background:{C['surface2']}; color:{C['text']};
                     font-size:12px; border:1px solid {C['border']}; border-radius:7px; }}
-                QPushButton:hover {{ background:{C['border']}; }}
+                QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 {C['accent']}, stop:1 #9b8bff);
+                    color:#fff; border-color:{C['accent']}; font-weight:600; }}
             """)
             b.clicked.connect(fn)
             r2.addWidget(b)
         layout.addLayout(r2)
 
-        # 全局设置
-        settings_btn = QPushButton("⚙️  全局设置")
-        settings_btn.setFixedHeight(32)
-        settings_btn.setStyleSheet(f"""
-            QPushButton {{ background:{C['bg']}; color:{C['text2']}; font-size:12px;
-                border:1px solid {C['border']}; border-radius:7px; }}
-            QPushButton:hover {{ background:{C['surface2']}; }}
-        """)
-        settings_btn.clicked.connect(self._open_settings)
-        layout.addWidget(settings_btn)
+        # 全局设置 + 帮助（等宽平分占满整行）
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        for label, fn in [("⚙️  全局设置", self._open_settings), ("📖 帮助", self._show_help)]:
+            b = QPushButton(label)
+            b.setFixedHeight(36)
+            b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
+            b.setStyleSheet(f"""
+                QPushButton {{ background:{C['bg']}; color:{C['text2']}; font-size:13px;
+                    font-weight:600; border:1px solid {C['border']}; border-radius:8px; }}
+                QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 {C['accent']}, stop:1 #9b8bff);
+                    color:#fff; border-color:{C['accent']}; }}
+            """)
+            b.clicked.connect(fn)
+            btn_row.addWidget(b, stretch=1)
+        layout.addLayout(btn_row)
 
         # 分隔线
         sep = QFrame()
@@ -632,7 +650,8 @@ class MainWindow(QMainWindow):
                 border-radius:10px; border:none; letter-spacing:1px; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
                 stop:0 #9b8bff, stop:1 {C['accent']}); }}
-            QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']}; }}
+            QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
+                border-radius:10px; border:none; }}
         """)
         self.deploy_btn.clicked.connect(self._do_deploy)
         self.deploy_btn.setEnabled(False)
@@ -641,8 +660,14 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setFixedHeight(46)
         self.cancel_btn.setFixedWidth(95)
         self.cancel_btn.setStyleSheet(f"""
-            QPushButton {{ background:{C['danger']}22; color:{C['danger']}; font-size:13px;
-                border:1px solid {C['danger']}55; border-radius:10px; }}
+            QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 {C['accent']}, stop:1 #9b8bff);
+                color:#fff; font-size:13px; font-weight:600;
+                border-radius:10px; border:none; }}
+            QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+            QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
+                border-radius:10px; border:none; }}
         """)
         self.cancel_btn.clicked.connect(self._cancel_deploy)
         self.cancel_btn.setEnabled(False)
@@ -651,8 +676,12 @@ class MainWindow(QMainWindow):
         self.clear_btn.setFixedHeight(46)
         self.clear_btn.setFixedWidth(80)
         self.clear_btn.setStyleSheet(f"""
-            QPushButton {{ background:{C['surface2']}; color:{C['text2']};
-                font-size:12px; border:1px solid {C['border']}; border-radius:10px; }}
+            QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 {C['accent']}, stop:1 #9b8bff);
+                color:#fff; font-size:12px; font-weight:600;
+                border-radius:10px; border:none; }}
+            QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #9b8bff, stop:1 {C['accent']}); }}
         """)
         self.clear_btn.clicked.connect(lambda: self.log_text.clear())
 
@@ -677,9 +706,10 @@ class MainWindow(QMainWindow):
                 app_item.setData(0, Qt.ItemDataRole.UserRole, {
                     'type': 'app', 'server_id': app[1], 'app_id': app[0],
                     'name': app[2], 'jar_name': app[3], 'sh_name': app[4],
-                    'maven_module': app[5],
-                    'local_project_path': app[6] if len(app) > 6 else '',
-                    'script_args': app[7] if len(app) > 7 else 'restart',
+                    'sh_path': app[5] if len(app) > 5 else '',
+                    'maven_module': app[6] if len(app) > 6 else '',
+                    'local_project_path': app[7] if len(app) > 7 else '',
+                    'script_args': app[8] if len(app) > 8 else 'restart',
                     'server': srv,
                 })
                 srv_item.addChild(app_item)
@@ -720,10 +750,12 @@ class MainWindow(QMainWindow):
             mvn = db.get_setting('maven_home', '') or '（未设置）'
             repo = db.get_setting('maven_repo', '') or '（未设置）'
             script_args = d.get('script_args', 'restart')
+            sh_path_display = d.get('sh_path') or '（默认项目路径）'
             self.info_card.setText(
                 f"<b style='color:{C['accent2']}; font-size:15px;'>📦 {d['name']}</b><br>"
                 f"<span style='color:{C['text2']}'>Jar：</span>{d['jar_name']}<br>"
                 f"<span style='color:{C['text2']}'>脚本：</span><b>{d['sh_name']}</b> {script_args}<br>"
+                f"<span style='color:{C['text2']}'>脚本路径：</span>{sh_path_display}<br>"
                 f"<span style='color:{C['text2']}'>服务器：</span>{s['name']} ({s['ip']})<br>"
                 f"<span style='color:{C['text2']}'>项目路径：</span>{proj}<br>"
                 f"<span style='color:{C['text2']}'>JDK：</span>{jdk}<br>"
@@ -823,6 +855,7 @@ class MainWindow(QMainWindow):
             'name': self.current_app['name'],
             'jar_name': self.current_app['jar_name'],
             'sh_name': self.current_app['sh_name'],
+            'sh_path': self.current_app.get('sh_path', ''),
             'maven_module': self.current_app.get('maven_module', ''),
             'local_project_path': self.current_app.get('local_project_path', ''),
             'script_args': self.current_app.get('script_args', 'restart'),
@@ -922,6 +955,39 @@ class MainWindow(QMainWindow):
     # ── CRUD 弹窗 ─────────────────────────────────────────────────────────────
     def _open_settings(self):
         dlg = SettingsDialog(self)
+        dlg.exec()
+
+    def _show_help(self):
+        help_path = os.path.join(os.path.dirname(__file__), "HELP.md")
+        if os.path.exists(help_path):
+            with open(help_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            content = "HELP.md 文件未找到，请确保文件存在于程序同目录下。"
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📖 使用说明")
+        dlg.setMinimumSize(680, 600)
+        dlg.setFont(QFont("Segoe UI", 10))
+        layout = QVBoxLayout(dlg)
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setMarkdown(content)
+        text.setStyleSheet(f"""
+            QTextEdit {{ background:{C['surface']}; color:{C['text']};
+                border:1px solid {C['border']}; border-radius:8px; padding:12px;
+                font-size:13px; line-height:1.7; }}
+        """)
+        layout.addWidget(text)
+        btn = QPushButton("✅ 知道了")
+        btn.setFixedSize(100, 36)
+        btn.setStyleSheet(f"""
+            QPushButton {{ background:{C['accent']}; color:#fff; font-size:13px;
+                font-weight:600; border-radius:8px; border:none; }}
+            QPushButton:hover {{ background:{C['accent']}cc; }}
+        """)
+        btn.clicked.connect(dlg.accept)
+        layout.addWidget(btn)
         dlg.exec()
 
     def _add_server(self):
@@ -1034,7 +1100,7 @@ class MainWindow(QMainWindow):
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("⚙️  全局设置  —  一键部署工具")
+        self.setWindowTitle("⚙️  全局设置")
         self.setMinimumWidth(520)
         self.setFont(QFont("Segoe UI", 10))
         self._build_ui()
@@ -1110,7 +1176,7 @@ class ServerDialog(QDialog):
     def __init__(self, parent=None, server=None):
         super().__init__(parent)
         self.server = server or {}
-        self.setWindowTitle("✏️  编辑服务器  —  一键部署工具" if server else "➕ 新增服务器  —  一键部署工具")
+        self.setWindowTitle("✏️  编辑服务器" if server else "➕ 新增服务器")
         self.setMinimumWidth(460)
         self.setFont(QFont("Segoe UI", 10))
         self._build_ui()
@@ -1200,7 +1266,7 @@ class AppDialog(QDialog):
         self.app = app or {}
         self.servers = servers or []
         self.preselected = preselected_server_id
-        self.setWindowTitle("✏️  编辑应用  —  一键部署工具" if app else "➕ 新增应用  —  一键部署工具")
+        self.setWindowTitle("✏️  编辑应用" if app else "➕ 新增应用")
         self.setMinimumWidth(510)
         self.setFont(QFont("Segoe UI", 10))
         self._build_ui()
@@ -1214,6 +1280,8 @@ class AppDialog(QDialog):
         self.jar_le.setText(self.app.get('jar_name', ''))
         self.sh_le = QLineEdit(placeholderText="例如：uu-industry.sh")
         self.sh_le.setText(self.app.get('sh_name', ''))
+        self.sh_path_le = QLineEdit(placeholderText="脚本所在目录，不填则使用项目路径（服务器上）")
+        self.sh_path_le.setText(self.app.get('sh_path', ''))
         self.module_le = QLineEdit(placeholderText="多模块项目填子模块名（可选）")
         self.module_le.setText(self.app.get('maven_module', ''))
         self.local_le = QLineEdit(placeholderText="例如：D:/ideaProjects/companyProject/IMasterR/iMaster-Api")
@@ -1233,6 +1301,7 @@ class AppDialog(QDialog):
         layout.addRow("应用名称：", self.name_le)
         layout.addRow("Jar 包名：", self.jar_le)
         layout.addRow("启动脚本：", self.sh_le)
+        layout.addRow("脚本路径：", self.sh_path_le)
         layout.addRow("脚本参数：", self.script_args_le)
         layout.addRow("Maven模块：", self.module_le)
         layout.addRow("本地项目路径：", self.local_le)
@@ -1267,6 +1336,7 @@ class AppDialog(QDialog):
             'name': self.name_le.text().strip(),
             'jar_name': self.jar_le.text().strip(),
             'sh_name': self.sh_le.text().strip(),
+            'sh_path': self.sh_path_le.text().strip(),
             'script_args': self.script_args_le.text().strip() or 'restart',
             'maven_module': self.module_le.text().strip(),
             'local_project_path': self.local_le.text().strip(),

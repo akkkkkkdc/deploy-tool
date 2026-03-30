@@ -21,7 +21,6 @@ build/
 
 # Git
 .git/
-.github/
 
 # Logs
 *.log

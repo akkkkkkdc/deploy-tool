@@ -32,6 +32,12 @@ class Database:
             self.conn.commit()
         except sqlite3.OperationalError:
             pass  # 列已存在
+        # apps 表新增 sh_path 列
+        try:
+            self.cursor.execute("ALTER TABLE apps ADD COLUMN sh_path TEXT DEFAULT ''")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 列已存在
 
     def init_tables(self):
         self.cursor.execute("""
@@ -53,6 +59,7 @@ class Database:
                 name TEXT NOT NULL,
                 jar_name TEXT NOT NULL,
                 sh_name TEXT NOT NULL,
+                sh_path TEXT DEFAULT '',
                 maven_module TEXT DEFAULT '',
                 local_project_path TEXT DEFAULT '',
                 script_args TEXT DEFAULT 'restart',
@@ -135,25 +142,25 @@ class Database:
         self.conn.commit()
 
     # ── 应用 CRUD ───────────────────────────────────────────────────────────
-    def add_app(self, server_id, name, jar_name, sh_name,
+    def add_app(self, server_id, name, jar_name, sh_name, sh_path='',
                 maven_module='', local_project_path='', script_args='restart'):
         self.cursor.execute(
-            "INSERT INTO apps (server_id, name, jar_name, sh_name, maven_module, local_project_path, script_args) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (server_id, name, jar_name, sh_name, maven_module, local_project_path, script_args)
+            "INSERT INTO apps (server_id, name, jar_name, sh_name, sh_path, maven_module, local_project_path, script_args) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (server_id, name, jar_name, sh_name, sh_path, maven_module, local_project_path, script_args)
         )
         self.conn.commit()
         return self.cursor.lastrowid
 
     def get_apps_by_server(self, server_id):
         self.cursor.execute(
-            "SELECT id, server_id, name, jar_name, sh_name, maven_module, local_project_path, script_args FROM apps WHERE server_id=?",
+            "SELECT id, server_id, name, jar_name, sh_name, sh_path, maven_module, local_project_path, script_args FROM apps WHERE server_id=?",
             (server_id,)
         )
         return self.cursor.fetchall()
 
     def get_all_apps(self):
         self.cursor.execute("""
-            SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.maven_module,
+            SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.sh_path, a.maven_module,
                    a.local_project_path, a.script_args,
                    s.name as server_name, s.ip, s.username, s.password_encrypted, s.server_path
             FROM apps a
@@ -164,16 +171,16 @@ class Database:
         for r in rows:
             result.append({
                 'id': r[0], 'server_id': r[1], 'name': r[2], 'jar_name': r[3],
-                'sh_name': r[4], 'maven_module': r[5], 'local_project_path': r[6],
-                'script_args': r[7],
-                'server_name': r[8], 'ip': r[9], 'username': r[10],
-                'password': self.decrypt_password(r[11]), 'server_path': r[12]
+                'sh_name': r[4], 'sh_path': r[5], 'maven_module': r[6], 'local_project_path': r[7],
+                'script_args': r[8],
+                'server_name': r[9], 'ip': r[10], 'username': r[11],
+                'password': self.decrypt_password(r[12]), 'server_path': r[13]
             })
         return result
 
     def get_app_by_id(self, app_id):
         self.cursor.execute("""
-            SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.maven_module,
+            SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.sh_path, a.maven_module,
                    a.local_project_path, a.script_args,
                    s.name as server_name, s.ip, s.username, s.password_encrypted, s.server_path
             FROM apps a
@@ -184,18 +191,18 @@ class Database:
         if r:
             return {
                 'id': r[0], 'server_id': r[1], 'name': r[2], 'jar_name': r[3],
-                'sh_name': r[4], 'maven_module': r[5], 'local_project_path': r[6],
-                'script_args': r[7],
-                'server_name': r[8], 'ip': r[9], 'username': r[10],
-                'password': self.decrypt_password(r[11]), 'server_path': r[12]
+                'sh_name': r[4], 'sh_path': r[5], 'maven_module': r[6], 'local_project_path': r[7],
+                'script_args': r[8],
+                'server_name': r[9], 'ip': r[10], 'username': r[11],
+                'password': self.decrypt_password(r[12]), 'server_path': r[13]
             }
         return None
 
-    def update_app(self, app_id, server_id, name, jar_name, sh_name,
+    def update_app(self, app_id, server_id, name, jar_name, sh_name, sh_path='',
                    maven_module='', local_project_path='', script_args='restart'):
         self.cursor.execute(
-            "UPDATE apps SET server_id=?, name=?, jar_name=?, sh_name=?, maven_module=?, local_project_path=?, script_args=? WHERE id=?",
-            (server_id, name, jar_name, sh_name, maven_module, local_project_path, script_args, app_id)
+            "UPDATE apps SET server_id=?, name=?, jar_name=?, sh_name=?, sh_path=?, maven_module=?, local_project_path=?, script_args=? WHERE id=?",
+            (server_id, name, jar_name, sh_name, sh_path, maven_module, local_project_path, script_args, app_id)
         )
         self.conn.commit()
 
