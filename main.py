@@ -1189,7 +1189,7 @@ class ServerDialog(QDialog):
         self.ip_le = QLineEdit(placeholderText="例如：192.168.90.16")
         self.ip_le.setText(self.server.get('ip', ''))
         self.user_le = QLineEdit(placeholderText="用户名")
-        self.user_le.setText(self.server.get('username', 'root'))
+        self.user_le.setText(self.server.get('username', ''))
         self.pw_le = QLineEdit(placeholderText="密码", echoMode=QLineEdit.EchoMode.Password)
         self.pw_le.setText(self.server.get('password', ''))
         self.pw_toggle_btn = QPushButton("🙈")
@@ -1207,7 +1207,7 @@ class ServerDialog(QDialog):
         pw_layout.setSpacing(6)
         pw_layout.setContentsMargins(0, 0, 0, 0)
         self.path_le = QLineEdit(placeholderText="/home/wuyuan/server/jingzhu-imaster")
-        self.path_le.setText(self.server.get('server_path', '/home/wuyuan/server/jingzhu-imaster'))
+        self.path_le.setText(self.server.get('server_path', ''))
         self.remark_le = QLineEdit(placeholderText="备注（可选）")
         self.remark_le.setText(self.server.get('remark', ''))
 
@@ -1219,6 +1219,15 @@ class ServerDialog(QDialog):
         layout.addRow("备注：", self.remark_le)
 
         btn_row = QHBoxLayout()
+        test_btn = QPushButton("🔗 测试连接")
+        test_btn.setFixedSize(100, 36)
+        test_btn.setStyleSheet(f"""
+            QPushButton {{ background:{C['surface2']}; color:{C['text']}; font-size:13px;
+                border:1px solid {C['border']}; border-radius:8px; }}
+            QPushButton:hover {{ background:{C['border']}; }}
+        """)
+        test_btn.clicked.connect(self._test_connection)
+        btn_row.addWidget(test_btn)
         btn_row.addStretch()
         ok_btn = QPushButton("✅  确定")
         ok_btn.setFixedSize(100, 36)
@@ -1247,6 +1256,29 @@ class ServerDialog(QDialog):
         else:
             self.pw_le.setEchoMode(QLineEdit.EchoMode.Password)
             self.pw_toggle_btn.setText("🙈")
+
+    def _test_connection(self):
+        import paramiko, socket
+        ip = self.ip_le.text().strip()
+        user = self.user_le.text().strip()
+        pw = self.pw_le.text()
+        if not ip or not user:
+            QMessageBox.warning(self, "提示", "请填写 IP 地址和用户名")
+            return
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.connect(ip, username=user, password=pw, timeout=8,
+                          banner_timeout=8, auth_timeout=8)
+            client.close()
+            QMessageBox.information(self, "✅ 连接成功",
+                f"服务器 {ip} 连接正常！")
+        except paramiko.AuthenticationException:
+            QMessageBox.warning(self, "❌ 认证失败", "用户名或密码错误")
+        except socket.timeout:
+            QMessageBox.warning(self, "❌ 连接超时", f"无法连接到 {ip}，请检查 IP 和网络")
+        except Exception as e:
+            QMessageBox.warning(self, "❌ 连接失败", f"连接 {ip} 失败：\n{str(e)}")
 
     def get_data(self):
         return {
