@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QFont, QColor, QPixmap
+from PyQt6.QtGui import QFont, QColor, QPixmap, QIcon
 from PyQt6.QtWidgets import QSplashScreen
 from PyQt6.QtGui import QFont, QColor
 from datetime import datetime
@@ -419,6 +419,10 @@ class MainWindow(QMainWindow):
         self._selected_server = None  # 当前选中的服务器（server dict）
         self._apply_style()
         self.init_ui()
+        # 数据加载延迟到窗口显示后，不阻塞启动
+        QTimer.singleShot(100, self._delayed_init)
+
+    def _delayed_init(self):
         self.refresh_tree()
         self._load_history()
 
@@ -960,7 +964,10 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _show_help(self):
-        help_path = os.path.join(os.path.dirname(__file__), "HELP.md")
+        if getattr(sys, 'frozen', False):
+            help_path = os.path.join(sys._MEIPASS, "HELP.md")
+        else:
+            help_path = os.path.join(os.path.dirname(__file__), "HELP.md")
         if os.path.exists(help_path):
             with open(help_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -996,9 +1003,6 @@ class MainWindow(QMainWindow):
         dlg = ServerDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
-            if not data['name'] or not data['ip']:
-                QMessageBox.warning(self, "提示", "名称和IP不能为空")
-                return
             db.add_server(**data)
             self.refresh_tree()
 
@@ -1016,9 +1020,6 @@ class MainWindow(QMainWindow):
         dlg = AppDialog(self, servers=servers, preselected_server_id=preselected)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
-            if not data['name'] or not data['jar_name'] or not data['server_id']:
-                QMessageBox.warning(self, "提示", "名称、Jar包名和服务器不能为空")
-                return
             db.add_app(**data)
             self.refresh_tree()
 
@@ -1259,6 +1260,45 @@ class ServerDialog(QDialog):
             self.pw_le.setEchoMode(QLineEdit.EchoMode.Password)
             self.pw_toggle_btn.setText("🙈")
 
+    def accept(self):
+        name = self.name_le.text().strip()
+        ip = self.ip_le.text().strip()
+        if not name or not ip:
+            self._show_validation_msg("⚠️  必填项", "服务器名称和 IP 地址不能为空")
+            return
+        super().accept()
+
+    def _show_validation_msg(self, title, text):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(320)
+        dlg.setFont(QFont("Segoe UI", 10))
+        dlg.setStyleSheet(f"QDialog {{ background:{C['surface']}; }}")
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(14)
+        icon_label = QLabel("⚠️")
+        icon_label.setStyleSheet("font-size:36px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+        msg = QLabel(text)
+        msg.setStyleSheet(f"color:{C['text']}; font-size:13px; line-height:1.6;")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+        ok_btn = QPushButton("✅  知道了")
+        ok_btn.setFixedSize(120, 36)
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 {C['accent']}, stop:1 #9b8bff);
+                color:#fff; font-size:13px; font-weight:600;
+                border-radius:9px; border:none; }}
+            QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+        """)
+        ok_btn.clicked.connect(dlg.accept)
+        layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        dlg.exec()
+
     def _test_connection(self):
         import paramiko, socket
         ip = self.ip_le.text().strip()
@@ -1415,13 +1455,64 @@ class AppDialog(QDialog):
             'server_id': server_id,
         }
 
+    def accept(self):
+        idx = self.server_cmb.currentIndex()
+        server_id = self.servers[idx]['id'] if idx >= 0 and idx < len(self.servers) else None
+        if not self.name_le.text().strip() or not self.jar_le.text().strip() or not server_id:
+            self._show_validation_msg("⚠️  必填项", "名称、Jar包名和服务器不能为空")
+            return
+        super().accept()
+
+    def _show_validation_msg(self, title, text):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(320)
+        dlg.setFont(QFont("Segoe UI", 10))
+        dlg.setStyleSheet(f"QDialog {{ background:{C['surface']}; }}")
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(14)
+        icon_label = QLabel("⚠️")
+        icon_label.setStyleSheet("font-size:36px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+        msg = QLabel(text)
+        msg.setStyleSheet(f"color:{C['text']}; font-size:13px; line-height:1.6;")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+        ok_btn = QPushButton("✅  知道了")
+        ok_btn.setFixedSize(120, 36)
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 {C['accent']}, stop:1 #9b8bff);
+                color:#fff; font-size:13px; font-weight:600;
+                border-radius:9px; border:none; }}
+            QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+        """)
+        ok_btn.clicked.connect(dlg.accept)
+        layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        dlg.exec()
+
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
+    # 设置窗口图标（任务栏 + 窗口左上角）
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后的 exe，图标在临时目录
+        icon_path = os.path.join(sys._MEIPASS, "icon.ico")
+    else:
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     # Splash screen - 立即显示，不卡顿
-    splash_img = os.path.join(os.path.dirname(__file__), "icon.jpg")
+    if getattr(sys, 'frozen', False):
+        splash_img = os.path.join(sys._MEIPASS, "icon.jpg")
+    else:
+        splash_img = os.path.join(os.path.dirname(__file__), "icon.jpg")
     if os.path.exists(splash_img):
         splash_pix = QPixmap(splash_img).scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     else:
