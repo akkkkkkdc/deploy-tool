@@ -22,17 +22,22 @@ from data.database import db
 
 # ─── 暗色配色 ─────────────────────────────────────────────────────────────────
 C = {
-    'bg': '#0f1117',
-    'surface': '#1a1d27',
-    'surface2': '#252836',
-    'border': '#2e3147',
-    'accent': '#7c6af7',
-    'accent2': '#6ee7b7',
-    'danger': '#f87171',
-    'warn': '#fbbf24',
-    'text': '#e2e8f0',
-    'text2': '#94a3b8',
-    'text3': '#64748b',
+    'bg':       '#0d0f18',
+    'surface':  '#13162b',
+    'surface2': '#1c2040',
+    'surface3': '#242849',
+    'border':   '#2d3158',
+    'border2':  '#3a3f6b',
+    'accent':   '#7b6ff0',
+    'accent2':  '#5b9cf6',
+    'accent3':  '#a78bfa',
+    'danger':   '#f06060',
+    'danger2':  '#ff7b7b',
+    'success':  '#4ade80',
+    'warn':     '#fbbf24',
+    'text':     '#e2e8f8',
+    'text2':    '#a0aac8',
+    'text3':    '#626880',
 }
 
 
@@ -420,11 +425,13 @@ class MainWindow(QMainWindow):
         self._apply_style()
         self.init_ui()
         # 数据加载延迟到窗口显示后，不阻塞启动
-        QTimer.singleShot(100, self._delayed_init)
+        QTimer.singleShot(300, self._delayed_init)
 
     def _delayed_init(self):
         self.refresh_tree()
-        self._load_history()
+        self.status_bar.showMessage("✅ 就绪")
+        # 历史记录延迟加载，不阻塞启动
+        QTimer.singleShot(500, self._load_history)
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -437,15 +444,9 @@ class MainWindow(QMainWindow):
             QTreeWidget::item:hover {{ background: {C['surface2']}; }}
             QTreeWidget::item:selected {{
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {C['accent']}, stop:1 {C['accent']}99);
+                    stop:0 {C['accent']}, stop:1 {C['accent2']});
                 color: #fff; font-weight: 600;
-                border: 1px solid {C['accent']}88;
-            }}
-            QTreeWidget::item:selected:active {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 {C['accent']}ee, stop:1 {C['accent']}bb);
-                color: #fff; font-weight: 600;
-                border: 1px solid {C['accent']};
+                border: 1px solid {C['accent3']}66;
             }}
             QPushButton {{ border-radius: 8px; font-weight: 600; font-size: 13px; }}
             QPushButton:disabled {{ opacity: 0.4; }}
@@ -467,7 +468,7 @@ class MainWindow(QMainWindow):
             QMenu::item:selected {{ background: {C['accent']}33; }}
             QMessageBox {{ background: {C['bg']}; }}
             QProgressBar {{ background: {C['surface2']}; border: none; border-radius: 6px; height: 8px; }}
-            QProgressBar::chunk {{ background: {C['accent']}; border-radius: 6px; }}
+            QProgressBar::chunk {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7b6ff0,stop:1 #5b9cf6); border-radius: 6px; }}
             QStatusBar {{ background: {C['surface']}; color: {C['text2']}; font-size: 12px;
                 border-top: 1px solid {C['border']}; }}
             QListWidget {{ background: {C['surface']}; border: 1px solid {C['border']};
@@ -485,7 +486,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("🚀 一键部署工具")
-        self.setMinimumSize(1180, 700)
+        self.setMinimumSize(1200, 760)
         self.resize(1300, 820)
 
         central = QWidget()
@@ -517,16 +518,30 @@ class MainWindow(QMainWindow):
 
     def _build_left_panel(self):
         panel = QWidget()
-        panel.setFixedWidth(310)
-        panel.setStyleSheet(f"background:{C['surface']}; border-right: 1px solid {C['border']}; border-radius:0px;")
+        panel.setFixedWidth(340)
+        panel.setStyleSheet(f"background:{C['surface']}; border-radius:16px;")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        # 标题
-        title = QLabel("🖥️  服务器与应用")
-        title.setStyleSheet(f"font-size:13px; font-weight:700; color:{C['accent']}; padding:2px 4px;")
-        layout.addWidget(title)
+        # 顶部渐变标题卡片
+        title_card = QWidget()
+        title_card.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #7b6ff0,stop:1 #5b9cf6); border-radius:12px; padding:14px 18px;")
+        tc_layout = QVBoxLayout(title_card)
+        tc_layout.setSpacing(2)
+        tc_title = QLabel("🚀 一键部署工具")
+        tc_title.setStyleSheet("font-size:17px; font-weight:700; color:#fff;")
+        tc_sub = QLabel("Java 微服务 · 一键部署平台")
+        tc_sub.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.7);")
+        tc_layout.addWidget(tc_title)
+        tc_layout.addWidget(tc_sub)
+        layout.addWidget(title_card)
+
+        # 服务器与应用标题行
+        hdr_row = QHBoxLayout()
+        hdr_row.addWidget(QLabel("🖥️  服务器与应用"))
+        hdr_row.addStretch()
+        layout.addLayout(hdr_row)
 
         # 树（占据上方剩余空间）
         self.tree = QTreeWidget()
@@ -597,7 +612,7 @@ class MainWindow(QMainWindow):
 
         # 历史记录
         hist_title = QLabel("📜 部署历史")
-        hist_title.setStyleSheet(f"font-size:13px; font-weight:700; color:{C['accent2']}; padding:2px 4px;")
+        hist_title.setStyleSheet(f"font-size:13px; font-weight:700; color:{C['accent3']}; padding:2px 4px;")
         layout.addWidget(hist_title)
 
         self.hist_list = QListWidget()
@@ -616,8 +631,8 @@ class MainWindow(QMainWindow):
         # 应用信息卡片
         self.info_card = QLabel()
         self.info_card.setStyleSheet(f"""
-            background:{C['surface']}; border:1px solid {C['border']};
-            border-radius:12px; padding:14px 16px; font-size:13px; line-height:1.8;
+            background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {C['surface']},stop:1 {C['bg']}); border:1px solid {C['border']};
+            border-radius:14px; padding:16px 20px; font-size:13px; line-height:1.9;
         """)
         self.info_card.setText("👈 请选择左侧服务器或应用")
         layout.addWidget(self.info_card)
@@ -647,15 +662,15 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
 
         self.deploy_btn = QPushButton("🚀  部署")
-        self.deploy_btn.setFixedHeight(48)
-        self.deploy_btn.setMinimumWidth(200)
+        self.deploy_btn.setFixedHeight(52)
+        self.deploy_btn.setMinimumWidth(220)
         self.deploy_btn.setStyleSheet(f"""
             QPushButton {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
                 stop:0 {C['accent']}, stop:1 #9b8bff);
                 color:#fff; font-size:15px; font-weight:700;
                 border-radius:10px; border:none; letter-spacing:1px; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
             QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
                 border-radius:10px; border:none; }}
         """)
@@ -671,7 +686,7 @@ class MainWindow(QMainWindow):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:10px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
             QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
                 border-radius:10px; border:none; }}
         """)
@@ -687,7 +702,7 @@ class MainWindow(QMainWindow):
                 color:#fff; font-size:12px; font-weight:600;
                 border-radius:10px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
         """)
         self.clear_btn.clicked.connect(lambda: self.log_text.clear())
 
@@ -1293,7 +1308,7 @@ class ServerDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1354,7 +1369,7 @@ class ServerDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1488,61 +1503,155 @@ class AppDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #9b8bff, stop:1 {C['accent']}); }}
+                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         dlg.exec()
 
 
+# ─── 丝滑启动画面 ──────────────────────────────────────────────────────────────
+class SplashScreen(QWidget):
+    """双击即弹、带真实进度条的丝滑启动画面"""
+    STEPS = [
+        "初始化数据库...",
+        "加载服务器配置...",
+        "加载部署历史...",
+        "构建界面元素...",
+        "✅ 启动完成",
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self._step = 0
+        self._build_ui()
+        # 居中显示
+        from PyQt6.QtGui import QScreen
+        screen = QApplication.primaryScreen()
+        if screen:
+            gr = screen.geometry()
+            self.move(gr.width() // 2 - self.width() // 2,
+                      gr.height() // 2 - self.height() // 2)
+        self.show()
+        self._start()
+
+    def _build_ui(self):
+        self.setFixedSize(460, 340)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setStyleSheet(f"background:{C['surface']}; border-radius:20px;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setSpacing(0)
+
+        # 图标区
+        icon_wrap = QWidget()
+        icon_wrap.setStyleSheet(f"background:{C['surface2']}; border-radius:16px; padding:16px;")
+        icon_layout = QHBoxLayout(icon_wrap)
+        icon_layout.setContentsMargins(16, 16, 16, 16)
+        icon_lbl = QLabel("🚀")
+        icon_lbl.setStyleSheet("font-size:52px;")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl = QLabel("一键部署工具")
+        title_lbl.setStyleSheet(f"font-size:22px; font-weight:700; color:{C['text']};")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_lbl = QLabel("Java 微服务 · 一键部署平台")
+        sub_lbl.setStyleSheet(f"font-size:12px; color:{C['text2']};")
+        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_col = QVBoxLayout()
+        right_col.setSpacing(4)
+        right_col.addWidget(title_lbl)
+        right_col.addWidget(sub_lbl)
+        right_col.addStretch()
+        icon_layout.addWidget(icon_lbl)
+        icon_layout.addSpacing(16)
+        icon_layout.addLayout(right_col)
+        outer.addWidget(icon_wrap)
+
+        outer.addSpacing(20)
+
+        # 步骤文字
+        self._step_lbl = QLabel(self.STEPS[0])
+        self._step_lbl.setStyleSheet(f"color:{C['text2']}; font-size:13px; padding:0 4px;")
+        self._step_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self._step_lbl)
+
+        outer.addSpacing(10)
+
+        # 进度条
+        self._bar = QProgressBar()
+        self._bar.setFixedHeight(8)
+        self._bar.setTextVisible(False)
+        self._bar.setStyleSheet(f"""
+            QProgressBar {{ background:{C['surface2']}; border:none; border-radius:6px; height:8px; }}
+            QProgressBar::chunk {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7b6ff0,stop:1 #5b9cf6); border-radius:6px; }}
+        """)
+        outer.addWidget(self._bar)
+
+        outer.addStretch()
+
+        # 底部提示
+        hint = QLabel("首次加载可能稍慢，请稍候...")
+        hint.setStyleSheet(f"color:{C['text3']}; font-size:11px;")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+
+    def _start(self):
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(350)  # 每350ms进一步
+
+    def _tick(self):
+        total_steps = len(self.STEPS)
+        # 每个step分两格：进+完成
+        overall_pct = self._step * (100 // total_steps)
+        self._bar.setValue(overall_pct)
+        self._bar.setValue(overall_pct)
+        if self._step < total_steps:
+            self._step_lbl.setText(self.STEPS[self._step])
+        self._step += 1
+        if self._step > total_steps:
+            self._timer.stop()
+            self._bar.setValue(100)
+            self._step_lbl.setText(self.STEPS[-1])
+            QTimer.singleShot(200, self.fade_out)
+
+    def fade_out(self):
+        # 直接关闭，不用 QGraphicsOpacityEffect（会导致 Windows 卡顿）
+        self.close()
+
+
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # 设置窗口图标（任务栏 + 窗口左上角）
+    # 窗口图标
     if getattr(sys, 'frozen', False):
-        # PyInstaller 打包后的 exe，图标在临时目录
         icon_path = os.path.join(sys._MEIPASS, "icon.ico")
     else:
         icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
-    # Splash screen - 立即显示，不卡顿
-    if getattr(sys, 'frozen', False):
-        splash_img = os.path.join(sys._MEIPASS, "icon.jpg")
-    else:
-        splash_img = os.path.join(os.path.dirname(__file__), "icon.jpg")
-    if os.path.exists(splash_img):
-        splash_pix = QPixmap(splash_img).scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    else:
-        splash_pix = QPixmap(400, 300)
-        splash_pix.fill(QColor(C['surface']))
-
-    splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
-    splash.setFont(QFont("Segoe UI", 11))
-    loading_label = QLabel("正在启动...")
-    loading_label.setStyleSheet(f"color:{C['text']}; font-weight:600; font-size:13px; margin-top:8px;")
-    loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    sp_layout = QVBoxLayout()
-    sp_layout.addStretch()
-    sp_layout.addWidget(loading_label)
-    sp_container = QWidget()
-    sp_container.setLayout(sp_layout)
-    sp_container.setStyleSheet(f"background:transparent;")
-
-    # 用QLabel叠加文字
-    splash.setStyleSheet(f"background:{C['surface']}; border:none; border-radius:16px;")
-    splash.showMessage("正在启动...", Qt.AlignmentFlag.AlignCenter, QColor(C['text']))
-    splash.show()
-
-    def on_window_ready():
-        w.show()
-        splash.finish(w)
+    # 启动画面（立即弹出，不卡顿）
+    splash = SplashScreen()
 
     w = MainWindow()
-    # 窗口准备好后显示
-    QTimer.singleShot(50, on_window_ready)
+    # 等主窗口数据加载完，关闭启动画面
+    def on_ready():
+        splash.close()
+        w.show()
+        # 窗口居中
+        from PyQt6.QtGui import QScreen
+        screen = QApplication.primaryScreen()
+        if screen:
+            gr = screen.geometry()
+            w.move(gr.width() // 2 - w.width() // 2,
+                   gr.height() // 2 - w.height() // 2)
+    QTimer.singleShot(2000, on_ready)
 
     sys.exit(app.exec())
