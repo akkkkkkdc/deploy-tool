@@ -45,6 +45,7 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 ip TEXT NOT NULL,
+                port INTEGER DEFAULT 22,
                 username TEXT NOT NULL,
                 password_encrypted TEXT NOT NULL,
                 server_path TEXT NOT NULL,
@@ -105,34 +106,34 @@ class Database:
         self.conn.commit()
 
     # ── 服务器 CRUD ─────────────────────────────────────────────────────────
-    def add_server(self, name, ip, username, password, server_path, remark=''):
+    def add_server(self, name, ip, port, username, password, server_path, remark=''):
         encrypted = self.encrypt_password(password)
         self.cursor.execute(
-            "INSERT INTO servers (name, ip, username, password_encrypted, server_path, remark) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, ip, username, encrypted, server_path, remark)
+            "INSERT INTO servers (name, ip, port, username, password_encrypted, server_path, remark) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, ip, port, username, encrypted, server_path, remark)
         )
         self.conn.commit()
         return self.cursor.lastrowid
 
     def get_all_servers(self):
         self.cursor.execute(
-            "SELECT id, name, ip, username, password_encrypted, server_path, remark FROM servers ORDER BY id"
+            "SELECT id, name, ip, port, username, password_encrypted, server_path, remark FROM servers ORDER BY id"
         )
         rows = self.cursor.fetchall()
         result = []
         for r in rows:
             result.append({
-                'id': r[0], 'name': r[1], 'ip': r[2], 'username': r[3],
-                'password': self.decrypt_password(r[4]),
-                'server_path': r[5], 'remark': r[6]
+                'id': r[0], 'name': r[1], 'ip': r[2], 'port': r[3], 'username': r[4],
+                'password': self.decrypt_password(r[5]),
+                'server_path': r[6], 'remark': r[7]
             })
         return result
 
-    def update_server(self, server_id, name, ip, username, password, server_path, remark=''):
+    def update_server(self, server_id, name, ip, port, username, password, server_path, remark=''):
         encrypted = self.encrypt_password(password)
         self.cursor.execute(
-            "UPDATE servers SET name=?, ip=?, username=?, password_encrypted=?, server_path=?, remark=? WHERE id=?",
-            (name, ip, username, encrypted, server_path, remark, server_id)
+            "UPDATE servers SET name=?, ip=?, port=?, username=?, password_encrypted=?, server_path=?, remark=? WHERE id=?",
+            (name, ip, port, username, encrypted, server_path, remark, server_id)
         )
         self.conn.commit()
 
@@ -162,7 +163,7 @@ class Database:
         self.cursor.execute("""
             SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.sh_path, a.maven_module,
                    a.local_project_path, a.script_args,
-                   s.name as server_name, s.ip, s.username, s.password_encrypted, s.server_path
+                   s.name as server_name, s.ip, s.port, s.username, s.password_encrypted, s.server_path
             FROM apps a
             JOIN servers s ON a.server_id = s.id
         """)
@@ -173,8 +174,8 @@ class Database:
                 'id': r[0], 'server_id': r[1], 'name': r[2], 'jar_name': r[3],
                 'sh_name': r[4], 'sh_path': r[5], 'maven_module': r[6], 'local_project_path': r[7],
                 'script_args': r[8],
-                'server_name': r[9], 'ip': r[10], 'username': r[11],
-                'password': self.decrypt_password(r[12]), 'server_path': r[13]
+                'server_name': r[9], 'ip': r[10], 'port': r[11], 'username': r[12],
+                'password': self.decrypt_password(r[13]), 'server_path': r[14]
             })
         return result
 
@@ -182,7 +183,7 @@ class Database:
         self.cursor.execute("""
             SELECT a.id, a.server_id, a.name, a.jar_name, a.sh_name, a.sh_path, a.maven_module,
                    a.local_project_path, a.script_args,
-                   s.name as server_name, s.ip, s.username, s.password_encrypted, s.server_path
+                   s.name as server_name, s.ip, s.port, s.username, s.password_encrypted, s.server_path
             FROM apps a
             JOIN servers s ON a.server_id = s.id
             WHERE a.id=?
@@ -193,8 +194,8 @@ class Database:
                 'id': r[0], 'server_id': r[1], 'name': r[2], 'jar_name': r[3],
                 'sh_name': r[4], 'sh_path': r[5], 'maven_module': r[6], 'local_project_path': r[7],
                 'script_args': r[8],
-                'server_name': r[9], 'ip': r[10], 'username': r[11],
-                'password': self.decrypt_password(r[12]), 'server_path': r[13]
+                'server_name': r[9], 'ip': r[10], 'port': r[11], 'username': r[12],
+                'password': self.decrypt_password(r[13]), 'server_path': r[14]
             }
         return None
 

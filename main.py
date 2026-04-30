@@ -86,6 +86,7 @@ class DeployThread(QThread):
             self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             self._ssh.connect(
                 hostname=app['ip'],
+                port=app.get('port', 22),
                 username=app['username'],
                 password=app['password'],
                 timeout=15,
@@ -1206,6 +1207,9 @@ class ServerDialog(QDialog):
         self.name_le.setText(self.server.get('name', ''))
         self.ip_le = QLineEdit(placeholderText="例如：192.168.90.16")
         self.ip_le.setText(self.server.get('ip', ''))
+        self.port_le = QLineEdit(placeholderText="默认 22")
+        self.port_le.setText(str(self.server.get('port', 22)))
+        self.port_le.setFixedWidth(100)
         self.user_le = QLineEdit(placeholderText="用户名")
         self.user_le.setText(self.server.get('username', ''))
         self.pw_le = QLineEdit(placeholderText="密码", echoMode=QLineEdit.EchoMode.Password)
@@ -1231,6 +1235,11 @@ class ServerDialog(QDialog):
 
         layout.addRow("服务器名称：", self.name_le)
         layout.addRow("IP 地址：", self.ip_le)
+        port_layout = QHBoxLayout()
+        port_layout.addWidget(self.port_le)
+        port_layout.addWidget(QLabel("  （SSH 端口，默认 22）"))
+        port_layout.addStretch()
+        layout.addRow("端  口：", port_layout)
         layout.addRow("用户名：", self.user_le)
         layout.addRow("密码：", pw_layout)
         layout.addRow("项目路径：", self.path_le)
@@ -1278,9 +1287,19 @@ class ServerDialog(QDialog):
     def accept(self):
         name = self.name_le.text().strip()
         ip = self.ip_le.text().strip()
+        port_text = self.port_le.text().strip()
         if not name or not ip:
             self._show_validation_msg("⚠️  必填项", "服务器名称和 IP 地址不能为空")
             return
+        if port_text:
+            try:
+                p = int(port_text)
+                if p < 1 or p > 65535:
+                    self._show_validation_msg("⚠️  端口无效", "端口号必须在 1-65535 之间")
+                    return
+            except ValueError:
+                self._show_validation_msg("⚠️  端口无效", "端口必须是数字")
+                return
         super().accept()
 
     def _show_validation_msg(self, title, text):
@@ -1317,6 +1336,8 @@ class ServerDialog(QDialog):
     def _test_connection(self):
         import paramiko, socket
         ip = self.ip_le.text().strip()
+        port_text = self.port_le.text().strip()
+        port = int(port_text) if port_text else 22
         user = self.user_le.text().strip()
         pw = self.pw_le.text()
         if not ip or not user:
@@ -1328,16 +1349,16 @@ class ServerDialog(QDialog):
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(ip, username=user, password=pw, timeout=8,
+            client.connect(ip, port=port, username=user, password=pw, timeout=8,
                           banner_timeout=8, auth_timeout=8)
             client.close()
-            self._show_msg("✅ 连接成功", f"服务器 {ip} 连接正常！", True)
+            self._show_msg("✅ 连接成功", f"服务器 {ip}:{port} 连接正常！", True)
         except paramiko.AuthenticationException:
             self._show_msg("❌ 认证失败", "用户名或密码错误", False)
         except socket.timeout:
-            self._show_msg("❌ 连接超时", f"无法连接到 {ip}，请检查 IP 和网络", False)
+            self._show_msg("❌ 连接超时", f"无法连接到 {ip}:{port}，请检查端口和网络", False)
         except Exception as e:
-            self._show_msg("❌ 连接失败", f"连接 {ip} 失败：\n{str(e)}", False)
+            self._show_msg("❌ 连接失败", f"连接 {ip}:{port} 失败：\n{str(e)}", False)
         finally:
             btn.setText("🔗 测试连接")
             btn.setEnabled(True)
@@ -1376,9 +1397,12 @@ class ServerDialog(QDialog):
         dlg.exec()
 
     def get_data(self):
+        port_text = self.port_le.text().strip()
+        port = int(port_text) if port_text else 22
         return {
             'name': self.name_le.text().strip(),
             'ip': self.ip_le.text().strip(),
+            'port': port,
             'username': self.user_le.text().strip(),
             'password': self.pw_le.text(),
             'server_path': self.path_le.text().strip(),
