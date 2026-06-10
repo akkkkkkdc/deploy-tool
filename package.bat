@@ -10,7 +10,7 @@ if exist build rmdir /s /q build
 if exist DeployTool.spec del /q DeployTool.spec
 
 echo ===== Build (minimal hook, onedir) =====
-D:\Softwares\study\python\python.exe -m PyInstaller ^
+python -m PyInstaller ^
     --noconfirm ^
     --windowed ^
     --name DeployTool ^
@@ -37,7 +37,7 @@ echo ===== Done =====
 echo Output: dist\DeployTool\DeployTool.exe
 REM === Post-build cleanup: strip unused Qt6 modules ===
 echo Cleaning unused Qt6 modules...
-D:\Softwares\study\python\python.exe cleanup_qt.py
+python cleanup_qt.py
 
 echo Total size:
 dir /s /-c dist\DeployTool | findstr "File(s)"

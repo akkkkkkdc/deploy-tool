@@ -1,12 +1,12 @@
-﻿# Post-build cleanup: remove unused Qt6 binaries/qml/plugins from onedir bundle.
-# Target: Qt Widgets-only app (no Quick/Quick3D/Pdf/3D/Designer/Multimedia/...)
-# All these modules are bundled by the PyQt6-Qt6 wheel but never imported.
-
 import os
 import shutil
 import sys
 
-ROOT = r'D:\codexTips\deploy-tool\dist\DeployTool\_internal\PyQt6\Qt6'
+# Post-build cleanup: remove unused Qt6 binaries/qml/plugins from onedir bundle.
+# Target: Qt Widgets-only app (no Quick/Quick3D/Pdf/3D/Designer/Multimedia/...)
+# All these modules are bundled by the PyQt6-Qt6 wheel but never imported.
+
+ROOT = os.path.join('dist', 'DeployTool', '_internal', 'PyQt6', 'Qt6')
 BIN = os.path.join(ROOT, 'bin')
 QML = os.path.join(ROOT, 'qml')
 PLUGINS = os.path.join(ROOT, 'plugins')
