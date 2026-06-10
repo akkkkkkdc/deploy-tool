@@ -59,12 +59,10 @@ jobs:
           body: |
             Jar包一键部署工具，自动构建版本
 
-            优化（v32+）：onefile → onedir，体积 102MB → ~87MB，启动 2.5s → 1.4s。
-            解压 deploy-tool.zip 到任意目录，双击 DeployTool\DeployTool.exe 启动。
+            使用方法：下载 deploy-tool.zip → 解压 → 双击 DeployTool\DeployTool.exe
+            体积优化（v32+）：onefile 102MB → onedir · 下载包 38MB，解压后 87MB，启动 1.4s。
           draft: false
           prerelease: false
-          files: |
-            deploy-tool.zip
-            dist/DeployTool/DeployTool.exe
+          files: deploy-tool.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
