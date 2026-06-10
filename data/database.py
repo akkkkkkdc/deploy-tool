@@ -1,13 +1,53 @@
 import sqlite3
 import os
+import sys
 import base64
 import hashlib
+from pathlib import Path
 from cryptography.fernet import Fernet
 
-# 数据统一存在 D:\skills\deply\data\，与软件目录分离，升级软件不丢数据
-DATA_DIR = r"D:\skills\deply\data"
-os.makedirs(DATA_DIR, exist_ok=True)
+# Data dir: %APPDATA%\deploy-tool\data\ on Windows, ~/.local/share/deploy-tool/data on Linux/macOS
+# This way data is not lost when the app is moved or reinstalled.
+def _resolve_data_dir() -> str:
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = str(Path.home() / "Library" / "Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    data_dir = os.path.join(base, "deploy-tool", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+DATA_DIR = _resolve_data_dir()
 DB_PATH = os.path.join(DATA_DIR, "deploy_tool.db")
+
+# Auto-migrate: if the new DB is fresh and the old hard-coded path has data,
+# copy the old DB over. This preserves user data when the app is moved to a
+# new path (e.g. D:\skills\deply\data -> %APPDATA%\deploy-tool\data).
+LEGACY_DB_PATH = r"D:\skills\deply\data\deploy_tool.db"
+
+def _auto_migrate_legacy():
+    if not os.path.isfile(LEGACY_DB_PATH):
+        return
+    if os.path.isfile(DB_PATH):
+        # If the new DB has any rows in core tables, assume it is in use and skip.
+        try:
+            c = sqlite3.connect(DB_PATH)
+            c.execute("SELECT COUNT(*) FROM servers")
+            c.close()
+            return  # new DB already has data, do not overwrite
+        except sqlite3.OperationalError:
+            pass  # new DB exists but schema is not yet initialised; safe to overwrite
+    try:
+        import shutil
+        shutil.copy2(LEGACY_DB_PATH, DB_PATH)
+        print(f"[deploy-tool] Migrated legacy DB from {LEGACY_DB_PATH} to {DB_PATH}")
+    except Exception as e:
+        print(f"[deploy-tool] Legacy DB migration failed: {e}")
+
+_auto_migrate_legacy()
+
 
 
 def get_encryption_key():

@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyc
@@ -28,3 +28,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Top-level onedir output (also covered by dist/ above, but be safe)
+DeployTool/

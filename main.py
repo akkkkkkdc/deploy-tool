@@ -82,6 +82,7 @@ class DeployThread(QThread):
 
         # ── 建立单一 SSH 连接（全程复用）─────────────────────────────────
         try:
+            import socket
             self._ssh = paramiko.SSHClient()
             self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             self._ssh.connect(
@@ -90,11 +91,38 @@ class DeployThread(QThread):
                 username=app['username'],
                 password=app['password'],
                 timeout=15,
-                banner_timeout=15
+                banner_timeout=15,
+                auth_timeout=15
             )
             log(f"[连接] ✅ 已建立 SSH 到 {app['ip']}")
+        except paramiko.AuthenticationException:
+            self.finished_err.emit(
+                f"❌ SSH 认证失败：账号或密码错误\n"
+                f"  服务器: {app['ip']}:{app.get('port', 22)}\n"
+                f"  用户名: {app['username']}\n"
+                f"  请在「编辑服务器」中核对账号密码后重试"
+            )
+            return
+        except socket.timeout:
+            self.finished_err.emit(
+                f"❌ SSH 连接超时：服务器无响应\n"
+                f"  服务器: {app['ip']}:{app.get('port', 22)}\n"
+                f"  可能原因：1) 服务器未开机  2) 防火墙/安全组未放行  3) IP/端口错误  4) 网络不通"
+            )
+            return
+        except paramiko.NoValidConnectionsError as e:
+            self.finished_err.emit(
+                f"❌ 无法连接到服务器：{e}\n"
+                f"  服务器: {app['ip']}:{app.get('port', 22)}\n"
+                f"  可能原因：1) 服务器关机/不可达  2) 端口错误（默认 22）  3) 防火墙拒绝"
+            )
+            return
         except Exception as e:
-            self.finished_err.emit(f"❌ SSH 连接失败: {e}")
+            self.finished_err.emit(
+                f"❌ SSH 连接失败: {e}\n"
+                f"  服务器: {app['ip']}:{app.get('port', 22)}\n"
+                f"  异常类型: {type(e).__name__}"
+            )
             return
 
         try:
@@ -107,6 +135,16 @@ class DeployThread(QThread):
             cancel_check()
             self.progress_signal.emit(10, 'maven')
             log("[1/6] 📦 Maven 打包中 ...")
+            # 项目路径校验
+            if not project_path:
+                self.finished_err.emit("❌ 本地项目路径为空，请先在应用配置中设置 local_project_path")
+                return
+            if not os.path.isdir(project_path):
+                self.finished_err.emit(f"❌ 本地项目路径不存在: {project_path}")
+                return
+            if not os.path.isfile(os.path.join(project_path, 'pom.xml')):
+                self.finished_err.emit(f"⚠️ 项目目录下未找到 pom.xml: {project_path}\n请确认这是一个 Maven 项目")
+                return
             if not self._maven_package(project_path, log, cancel_check):
                 return
             log("[1/6] ✅ Maven 打包完成")
@@ -423,16 +461,21 @@ class MainWindow(QMainWindow):
         self.deploy_thread = None
         self.current_app = None
         self._selected_server = None  # 当前选中的服务器（server dict）
+        # Phase 1 极简：先让窗口能创建并显示
+        self.setWindowTitle("🚀 一键部署工具")
+        self.resize(1280, 800)
+        ph = QWidget()
+        self.setCentralWidget(ph)
+        # Phase 2：真正的 UI 构建推迟到事件循环启动后（0ms 触发）
+        QTimer.singleShot(0, self._build_ui)
+
+    def _build_ui(self):
         self._apply_style()
         self.init_ui()
-        # 数据加载延迟到窗口显示后，不阻塞启动
-        QTimer.singleShot(300, self._delayed_init)
-
-    def _delayed_init(self):
         self.refresh_tree()
         self.status_bar.showMessage("✅ 就绪")
-        # 历史记录延迟加载，不阻塞启动
-        QTimer.singleShot(500, self._load_history)
+        self._load_history()
+
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -671,7 +714,7 @@ class MainWindow(QMainWindow):
                 color:#fff; font-size:15px; font-weight:700;
                 border-radius:10px; border:none; letter-spacing:1px; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
             QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
                 border-radius:10px; border:none; }}
         """)
@@ -687,7 +730,7 @@ class MainWindow(QMainWindow):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:10px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
             QPushButton:disabled {{ background:{C['surface2']}; color:{C['text3']};
                 border-radius:10px; border:none; }}
         """)
@@ -703,7 +746,7 @@ class MainWindow(QMainWindow):
                 color:#fff; font-size:12px; font-weight:600;
                 border-radius:10px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
         """)
         self.clear_btn.clicked.connect(lambda: self.log_text.clear())
 
@@ -928,6 +971,7 @@ class MainWindow(QMainWindow):
         self._deploy_finish(success=True)
 
     def _on_deploy_err(self, msg):
+        self._append_log(msg)
         self._deploy_finish(success=False)
 
     def _deploy_finish(self, success):
@@ -1327,7 +1371,7 @@ class ServerDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1390,7 +1434,7 @@ class ServerDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1527,7 +1571,7 @@ class AppDialog(QDialog):
                 color:#fff; font-size:13px; font-weight:600;
                 border-radius:9px; border:none; }}
             QPushButton:hover {{ background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #a78bfa,stop:1 #7b6ff0); box-shadow:0 6px 28px #a78bfa77; }}
+                stop:0 #a78bfa,stop:1 #7b6ff0);  }}
         """)
         ok_btn.clicked.connect(dlg.accept)
         layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1627,7 +1671,7 @@ class SplashScreen(QWidget):
     def _start(self):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(350)  # 每350ms进一步
+        self._timer.start(120)  # 每350ms进一步
 
     def _tick(self):
         total_steps = len(self.STEPS)
@@ -1642,7 +1686,7 @@ class SplashScreen(QWidget):
             self._timer.stop()
             self._bar.setValue(100)
             self._step_lbl.setText(self.STEPS[-1])
-            QTimer.singleShot(200, self.fade_out)
+            QTimer.singleShot(80, self.fade_out)
 
     def fade_out(self):
         # 直接关闭，不用 QGraphicsOpacityEffect（会导致 Windows 卡顿）
@@ -1652,6 +1696,8 @@ class SplashScreen(QWidget):
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # 关键修复：splash 关闭后主窗口不会自动退出应用
+    app.setQuitOnLastWindowClosed(False)
 
     # 窗口图标
     if getattr(sys, 'frozen', False):
@@ -1665,10 +1711,14 @@ if __name__ == "__main__":
     splash = SplashScreen()
 
     w = MainWindow()
-    # 等主窗口数据加载完，关闭启动画面
     def on_ready():
-        splash.close()
+        try:
+            splash.close()
+        except Exception:
+            pass
         w.show()
+        w.raise_()
+        w.activateWindow()
         # 窗口居中
         from PyQt6.QtGui import QScreen
         screen = QApplication.primaryScreen()
@@ -1676,6 +1726,7 @@ if __name__ == "__main__":
             gr = screen.geometry()
             w.move(gr.width() // 2 - w.width() // 2,
                    gr.height() // 2 - w.height() // 2)
-    QTimer.singleShot(2000, on_ready)
+    # 主窗口首帧绘制后立即切换（不再延后 2 秒）
+    QTimer.singleShot(0, on_ready)
 
     sys.exit(app.exec())
